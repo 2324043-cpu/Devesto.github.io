@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hex Frontier - Catan Style</title>
+    <title>Hex Frontier - Catan Style Strategy Game</title>
+    <!-- Tailwind CSS for UI styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #0f172a; color: white; overflow: hidden; font-family: 'Hiragino Mincho ProN', 'MS Mincho', serif; }
@@ -21,7 +22,7 @@
 </head>
 <body class="flex flex-col h-screen select-none">
 
-    <!-- Top UI -->
+    <!-- Top UI (Resources & Dice) -->
     <div class="ui-panel p-4 flex justify-between items-center shadow-xl z-10">
         <div class="flex items-center space-x-4">
             <div class="flex flex-col">
@@ -66,16 +67,16 @@
         </div>
     </div>
 
-    <!-- Game Board -->
+    <!-- Game Board Canvas Area -->
     <div class="relative flex-grow flex items-center justify-center bg-[#020617] overflow-hidden">
         <canvas id="gameCanvas"></canvas>
         
-        <!-- Instruction Overlay (Visible only after roll) -->
+        <!-- Interactive Instruction Guide -->
         <div id="roll-instruction" class="hidden absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600/80 px-4 py-1 rounded-full text-xs font-bold guide-blink pointer-events-none">
             マップ上の「点」や「線」をクリックして建設してください
         </div>
 
-        <!-- Info Panel -->
+        <!-- Build Context Menu -->
         <div id="info-panel" class="hidden absolute right-6 top-6 w-60 ui-panel rounded-xl overflow-hidden shadow-2xl transition-all">
             <div class="p-3 bg-gray-800/50 border-b border-white/5">
                 <h3 id="obj-title" class="text-lg font-black italic">建設対象</h3>
@@ -90,7 +91,7 @@
             </div>
         </div>
 
-        <!-- Overlays -->
+        <!-- Win/Loss Overlay screen -->
         <div id="overlay" class="hidden absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center z-50 text-center px-4">
             <h1 id="result-title" class="text-6xl font-black mb-4 tracking-tighter">制覇</h1>
             <p id="result-msg" class="text-gray-400 mb-8 max-w-md"></p>
@@ -100,7 +101,7 @@
         </div>
     </div>
 
-    <!-- Bottom UI -->
+    <!-- Footer UI & Log console -->
     <div class="p-3 bg-[#0f172a] border-t border-gray-800 flex space-x-4">
         <div id="game-log" class="flex-grow h-16 overflow-y-auto text-[11px] text-gray-400 font-medium space-y-1">
             <div>>> 無人島カタンへようこそ。開拓を開始してください。</div>
@@ -120,10 +121,10 @@
         const HEX_SIZE = 55;
         const GRID_RADIUS = 2;
         const COLORS = {
-            forest: '#14532d',  // 木
-            hill: '#7c2d12',    // 土
-            mountain: '#334155', // 石
-            pasture: '#3f6212',  // 麦
+            forest: '#14532d',  // Wood
+            hill: '#7c2d12',    // Clay
+            mountain: '#334155', // Ore/Stone
+            pasture: '#3f6212',  // Wheat
             desert: '#1e293b',
             player: '#3b82f6',
             ai: '#ef4444',
@@ -151,6 +152,7 @@
             vp: 2
         };
 
+        // --- MAP COORDINATE MATHEMATICS ---
         function hexToPixel(q, r) {
             const x = HEX_SIZE * (3/2 * q);
             const y = HEX_SIZE * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r);
@@ -189,6 +191,7 @@
             render();
         }
 
+        // --- GAME STATE CONTROLLER ---
         function initGame() {
             resizeCanvas();
 
@@ -209,6 +212,7 @@
             numbers.sort(() => Math.random() - 0.5);
             let numIdx = 0;
 
+            // Generate map nodes on radial hex grid
             for (let q = -GRID_RADIUS; q <= GRID_RADIUS; q++) {
                 let r1 = Math.max(-GRID_RADIUS, -q - GRID_RADIUS);
                 let r2 = Math.min(GRID_RADIUS, -q + GRID_RADIUS);
@@ -220,7 +224,7 @@
                 }
             }
 
-            // Initial placement for Player and AI
+            // Set Initial placement for Player and AI
             const pNode = getCanonicalNodeId(-2, 1, 0);
             const pEdge = getCanonicalEdgeId(-2, 1, 0);
             state.nodes[pNode] = { owner: 'player' };
@@ -240,11 +244,12 @@
             render();
         }
 
+        // --- DRAW ENGINE ---
         function render() {
             if (!ctx) return;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. Draw Hexes
+            // 1. Draw Terrains / Hexagons
             state.hexes.forEach(h => {
                 const pos = hexToPixel(h.q, h.r);
                 drawHex(pos.x, pos.y, HEX_SIZE - 2, h.color);
@@ -266,7 +271,7 @@
                 }
             });
 
-            // 2. Draw Edges (Roads and Ghost edges)
+            // 2. Draw Roads (Edges)
             state.hexes.forEach(h => {
                 const vs = getHexVertices(h.q, h.r);
                 for(let i=0; i<6; i++) {
@@ -275,7 +280,6 @@
                     const isSelected = state.selected?.type === 'edge' && state.selected.id === eid;
                     const v1 = vs[i], v2 = vs[(i+1)%6];
                     
-                    // Show dots or dashed lines if it's player's turn and rolled
                     if (road || isSelected || (state.hasRolled && state.turn === 'player' && !state.gameOver)) {
                         ctx.beginPath();
                         ctx.moveTo(v1.x, v1.y);
@@ -290,7 +294,6 @@
                             ctx.lineWidth = 4;
                             ctx.setLineDash([]);
                         } else {
-                            // Ghost edge for interactive feedback
                             ctx.strokeStyle = 'rgba(255,255,255,0.05)';
                             ctx.lineWidth = 2;
                             ctx.setLineDash([2, 2]);
@@ -301,7 +304,7 @@
                 }
             });
 
-            // 3. Draw Nodes (Settlements)
+            // 3. Draw Settlements (Nodes)
             state.hexes.forEach(h => {
                 getHexVertices(h.q, h.r).forEach((v, i) => {
                     const nid = getCanonicalNodeId(h.q, h.r, i);
@@ -327,7 +330,6 @@
                             ctx.fillStyle = 'rgba(255,255,255,0.6)';
                             ctx.fill();
                         } else {
-                            // Ghost node
                             ctx.fillStyle = 'rgba(255,255,255,0.1)';
                             ctx.fill();
                         }
@@ -352,6 +354,7 @@
             ctx.stroke();
         }
 
+        // --- GAME ACTIONS & RULES ---
         function updateUI() {
             document.getElementById('res-wood').textContent = state.resources.wood;
             document.getElementById('res-stone').textContent = state.resources.stone;
@@ -463,6 +466,7 @@
             render();
         }
 
+        // --- INTERACTION EVENT LISTENERS ---
         canvas.addEventListener('mousedown', (e) => {
             if (!state.hasRolled || state.turn !== 'player' || state.gameOver) return;
             const rect = canvas.getBoundingClientRect();
@@ -470,14 +474,14 @@
             const my = e.clientY - rect.top;
 
             let found = null;
-            // Check Nodes first (priority)
+            // Check Nodes first (high priority click targets)
             state.hexes.forEach(h => {
                 const vs = getHexVertices(h.q, h.r);
                 vs.forEach((v, i) => {
                     if (Math.hypot(v.x - mx, v.y - my) < 20) found = { type: 'node', id: getCanonicalNodeId(h.q, h.r, i) };
                 });
             });
-            // Check Edges
+            // Check Edges next
             if(!found) {
                 state.hexes.forEach(h => {
                     const vs = getHexVertices(h.q, h.r);
@@ -535,6 +539,7 @@
             aiAction();
         });
 
+        // --- ENEMY AI AGENT PROCESS ---
         function aiAction() {
             setTimeout(() => {
                 rollDice();
@@ -550,7 +555,6 @@
                     });
 
                     if(candidates.length > 0) {
-                        // AI Logic: Prefer nodes if possible
                         const target = candidates.find(c => c.type === 'node') || candidates[Math.floor(Math.random() * candidates.length)];
                         if(target.type === 'node') {
                             state.aiResources.wood -= 1; state.aiResources.food -= 1; state.aiResources.clay -= 1; state.aiResources.stone -= 1;
@@ -577,7 +581,7 @@
         function checkWin() {
             const pVP = state.vp;
             const aNodes = Object.values(state.nodes).filter(n => n.owner === 'ai').length;
-            const aVP = aNodes + 1; // Basic VP for AI
+            const aVP = aNodes + 1;
             if (pVP >= 10 || aVP >= 10) {
                 state.gameOver = true;
                 document.getElementById('overlay').classList.remove('hidden');
@@ -591,7 +595,7 @@
         document.getElementById('restart-btn').addEventListener('click', initGame);
         document.getElementById('btn-reset-top').addEventListener('click', initGame);
 
-        // Initial launch
+        // Bootstrap App
         initGame();
         window.onresize = resizeCanvas;
     </script>
