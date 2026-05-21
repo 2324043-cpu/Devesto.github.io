@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hex Frontier - Catan Style</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: white; overflow: hidden; font-family: 'Hiragino Mincho ProN', 'MS Mincho', serif; }
+        canvas { cursor: crosshair; touch-action: none; display: block; }
+        .ui-panel { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
+        .resource-val { font-family: 'Courier New', Courier, monospace; }
+        .btn-action { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-action:active { transform: scale(0.95); }
+        .btn-action:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(1); }
+        #game-log::-webkit-scrollbar { width: 4px; }
+        #game-log::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        .guide-blink { animation: blink 2s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body class="flex flex-col h-screen select-none">
+
+    <!-- Top UI -->
+    <div class="ui-panel p-4 flex justify-between items-center shadow-xl z-10">
+        <div class="flex items-center space-x-4">
+            <div class="flex flex-col">
+                <span class="text-[10px] uppercase text-gray-500 font-bold">保有資源</span>
+                <div class="flex space-x-2">
+                    <div class="flex items-center bg-emerald-900/50 border border-emerald-500/30 px-2 py-1 rounded" title="木材">
+                        <span class="text-[10px] text-emerald-300 mr-1">木</span><span id="res-wood" class="resource-val font-bold text-emerald-400">0</span>
+                    </div>
+                    <div class="flex items-center bg-slate-700/50 border border-slate-500/30 px-2 py-1 rounded" title="鉱石">
+                        <span class="text-[10px] text-slate-300 mr-1">石</span><span id="res-stone" class="resource-val font-bold text-slate-300">0</span>
+                    </div>
+                    <div class="flex items-center bg-amber-800/50 border border-amber-500/30 px-2 py-1 rounded" title="小麦">
+                        <span class="text-[10px] text-amber-300 mr-1">麦</span><span id="res-food" class="resource-val font-bold text-amber-400">0</span>
+                    </div>
+                    <div class="flex items-center bg-red-900/50 border border-red-500/30 px-2 py-1 rounded" title="粘土">
+                        <span class="text-[10px] text-red-300 mr-1">土</span><span id="res-clay" class="resource-val font-bold text-red-400">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="h-10 w-[1px] bg-gray-700 mx-1"></div>
+            <div class="flex flex-col">
+                <span class="text-[10px] uppercase text-gray-500 font-bold">勝利点</span>
+                <div class="text-sm font-bold"><span id="vp-count" class="text-blue-400 text-lg">2</span> / 10 VP</div>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center">
+            <div id="dice-container" class="flex space-x-2">
+                <div id="dice-1" class="w-8 h-8 bg-white text-black rounded flex items-center justify-center font-bold text-lg shadow-inner">-</div>
+                <div id="dice-2" class="w-8 h-8 bg-white text-black rounded flex items-center justify-center font-bold text-lg shadow-inner">-</div>
+            </div>
+            <span class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-widest">合計: <span id="dice-total" class="text-white">-</span></span>
+        </div>
+
+        <div class="flex space-x-2">
+            <button id="btn-roll" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded-lg shadow-lg btn-action">
+                サイコロを振る
+            </button>
+            <button id="end-turn" class="hidden bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-lg shadow-lg btn-action">
+                ターン終了
+            </button>
+        </div>
+    </div>
+
+    <!-- Game Board -->
+    <div class="relative flex-grow flex items-center justify-center bg-[#020617] overflow-hidden">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- Instruction Overlay (Visible only after roll) -->
+        <div id="roll-instruction" class="hidden absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600/80 px-4 py-1 rounded-full text-xs font-bold guide-blink pointer-events-none">
+            マップ上の「点」や「線」をクリックして建設してください
+        </div>
+
+        <!-- Info Panel -->
+        <div id="info-panel" class="hidden absolute right-6 top-6 w-60 ui-panel rounded-xl overflow-hidden shadow-2xl transition-all">
+            <div class="p-3 bg-gray-800/50 border-b border-white/5">
+                <h3 id="obj-title" class="text-lg font-black italic">建設対象</h3>
+                <p id="obj-desc" class="text-[10px] text-gray-400 uppercase mt-1">選択中の場所に建設します</p>
+            </div>
+            <div class="p-4 space-y-3">
+                <button id="btn-build" class="w-full bg-orange-600 hover:bg-orange-500 text-white py-2 px-4 rounded-lg text-sm font-bold btn-action">
+                    建設を実行
+                </button>
+                <div id="cost-info" class="flex flex-wrap justify-center gap-1 text-[9px] text-gray-400">
+                </div>
+            </div>
+        </div>
+
+        <!-- Overlays -->
+        <div id="overlay" class="hidden absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center z-50 text-center px-4">
+            <h1 id="result-title" class="text-6xl font-black mb-4 tracking-tighter">制覇</h1>
+            <p id="result-msg" class="text-gray-400 mb-8 max-w-md"></p>
+            <button id="restart-btn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-12 rounded-full text-xl btn-action shadow-2xl">
+                再挑戦
+            </button>
+        </div>
+    </div>
+
+    <!-- Bottom UI -->
+    <div class="p-3 bg-[#0f172a] border-t border-gray-800 flex space-x-4">
+        <div id="game-log" class="flex-grow h-16 overflow-y-auto text-[11px] text-gray-400 font-medium space-y-1">
+            <div>>> 無人島カタンへようこそ。開拓を開始してください。</div>
+        </div>
+        <div class="w-48 flex flex-col justify-center border-l border-gray-800 pl-4 space-y-1">
+            <div class="text-[9px] text-gray-500 font-bold uppercase">建設コスト</div>
+            <div class="text-[9px] text-gray-400 flex justify-between"><span>拠点(1VP):</span> <span>木1 土1 麦1 石1</span></div>
+            <div class="text-[9px] text-gray-400 flex justify-between"><span>道:</span> <span>木1 土1</span></div>
+            <button id="btn-reset-top" class="text-[9px] text-gray-600 underline mt-1 hover:text-gray-400 text-left">ゲームをリセット</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const HEX_SIZE = 55;
+        const GRID_RADIUS = 2;
+        const COLORS = {
+            forest: '#14532d',  // 木
+            hill: '#7c2d12',    // 土
+            mountain: '#334155', // 石
+            pasture: '#3f6212',  // 麦
+            desert: '#1e293b',
+            player: '#3b82f6',
+            ai: '#ef4444',
+            bg: '#020617'
+        };
+
+        const TERRAINS = [
+            { id: 'forest', name: '森林', res: 'wood', color: COLORS.forest, label: '木' },
+            { id: 'hill', name: '丘陵', res: 'clay', color: COLORS.hill, label: '土' },
+            { id: 'mountain', name: '山脈', res: 'stone', color: COLORS.mountain, label: '石' },
+            { id: 'pasture', name: '平原', res: 'food', color: COLORS.pasture, label: '麦' },
+            { id: 'desert', name: '砂漠', res: 'none', color: COLORS.desert, label: '砂' }
+        ];
+
+        let state = {
+            resources: { wood: 4, stone: 2, food: 2, clay: 4 },
+            aiResources: { wood: 4, stone: 2, food: 2, clay: 4 },
+            hexes: [],
+            nodes: {}, 
+            edges: {}, 
+            turn: 'player',
+            hasRolled: false,
+            selected: null, 
+            gameOver: false,
+            vp: 2
+        };
+
+        function hexToPixel(q, r) {
+            const x = HEX_SIZE * (3/2 * q);
+            const y = HEX_SIZE * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r);
+            return { x: x + canvas.width/2, y: y + canvas.height/2 };
+        }
+
+        function getHexVertices(q, r) {
+            const pos = hexToPixel(q, r);
+            let vertices = [];
+            for (let i = 0; i < 6; i++) {
+                let angle = (Math.PI / 3) * i;
+                vertices.push({
+                    x: pos.x + HEX_SIZE * Math.cos(angle),
+                    y: pos.y + HEX_SIZE * Math.sin(angle)
+                });
+            }
+            return vertices;
+        }
+
+        function getCanonicalNodeId(q, r, i) {
+            const vs = getHexVertices(q, r);
+            return `${Math.round(vs[i].x)},${Math.round(vs[i].y)}`;
+        }
+
+        function getCanonicalEdgeId(q, r, i) {
+            const vs = getHexVertices(q, r);
+            const v1 = vs[i];
+            const v2 = vs[(i+1)%6];
+            const pts = [`${Math.round(v1.x)},${Math.round(v1.y)}`, `${Math.round(v2.x)},${Math.round(v2.y)}`];
+            return pts.sort().join('|');
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 200;
+            render();
+        }
+
+        function initGame() {
+            resizeCanvas();
+
+            state = {
+                resources: { wood: 4, stone: 2, food: 2, clay: 4 },
+                aiResources: { wood: 4, stone: 2, food: 2, clay: 4 },
+                hexes: [],
+                nodes: {},
+                edges: {},
+                vp: 2,
+                turn: 'player',
+                hasRolled: false,
+                selected: null,
+                gameOver: false
+            };
+
+            const numbers = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
+            numbers.sort(() => Math.random() - 0.5);
+            let numIdx = 0;
+
+            for (let q = -GRID_RADIUS; q <= GRID_RADIUS; q++) {
+                let r1 = Math.max(-GRID_RADIUS, -q - GRID_RADIUS);
+                let r2 = Math.min(GRID_RADIUS, -q + GRID_RADIUS);
+                for (let r = r1; r <= r2; r++) {
+                    const isDesert = (q === 0 && r === 0);
+                    const terrain = isDesert ? TERRAINS[4] : TERRAINS[Math.floor(Math.random() * 4)];
+                    const num = isDesert ? null : numbers[numIdx++];
+                    state.hexes.push({ q, r, ...terrain, num });
+                }
+            }
+
+            // Initial placement for Player and AI
+            const pNode = getCanonicalNodeId(-2, 1, 0);
+            const pEdge = getCanonicalEdgeId(-2, 1, 0);
+            state.nodes[pNode] = { owner: 'player' };
+            state.edges[pEdge] = { owner: 'player' };
+
+            const aNode = getCanonicalNodeId(2, -1, 3);
+            const aEdge = getCanonicalEdgeId(2, -1, 2);
+            state.nodes[aNode] = { owner: 'ai' };
+            state.edges[aEdge] = { owner: 'ai' };
+
+            document.getElementById('overlay').classList.add('hidden');
+            document.getElementById('btn-roll').classList.remove('hidden');
+            document.getElementById('end-turn').classList.add('hidden');
+            document.getElementById('roll-instruction').classList.add('hidden');
+            
+            addLog("開拓準備が整いました。サイコロを振ってください。", 'blue');
+            render();
+        }
+
+        function render() {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Draw Hexes
+            state.hexes.forEach(h => {
+                const pos = hexToPixel(h.q, h.r);
+                drawHex(pos.x, pos.y, HEX_SIZE - 2, h.color);
+                
+                if (h.num) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 16, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.fillStyle = (h.num === 6 || h.num === 8) ? '#ef4444' : '#0f172a';
+                    ctx.font = 'bold 14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(h.num, pos.x, pos.y + 5);
+                } else if (h.id === 'desert') {
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText("砂漠", pos.x, pos.y + 5);
+                }
+            });
+
+            // 2. Draw Edges (Roads and Ghost edges)
+            state.hexes.forEach(h => {
+                const vs = getHexVertices(h.q, h.r);
+                for(let i=0; i<6; i++) {
+                    const eid = getCanonicalEdgeId(h.q, r=h.r, i);
+                    const road = state.edges[eid];
+                    const isSelected = state.selected?.type === 'edge' && state.selected.id === eid;
+                    const v1 = vs[i], v2 = vs[(i+1)%6];
+                    
+                    // Show dots or dashed lines if it's player's turn and rolled
+                    if (road || isSelected || (state.hasRolled && state.turn === 'player' && !state.gameOver)) {
+                        ctx.beginPath();
+                        ctx.moveTo(v1.x, v1.y);
+                        ctx.lineTo(v2.x, v2.y);
+                        
+                        if (road) {
+                            ctx.strokeStyle = road.owner === 'player' ? COLORS.player : COLORS.ai;
+                            ctx.lineWidth = 8;
+                            ctx.setLineDash([]);
+                        } else if (isSelected) {
+                            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                            ctx.lineWidth = 4;
+                            ctx.setLineDash([]);
+                        } else {
+                            // Ghost edge for interactive feedback
+                            ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([2, 2]);
+                        }
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    }
+                }
+            });
+
+            // 3. Draw Nodes (Settlements)
+            state.hexes.forEach(h => {
+                getHexVertices(h.q, h.r).forEach((v, i) => {
+                    const nid = getCanonicalNodeId(h.q, h.r, i);
+                    const set = state.nodes[nid];
+                    const isSelected = state.selected?.type === 'node' && state.selected.id === nid;
+
+                    if (set || isSelected || (state.hasRolled && state.turn === 'player' && !state.gameOver)) {
+                        ctx.beginPath();
+                        ctx.arc(v.x, v.y, set ? 10 : isSelected ? 8 : 4, 0, Math.PI*2);
+                        
+                        if (set) {
+                            ctx.fillStyle = set.owner === 'player' ? COLORS.player : COLORS.ai;
+                            ctx.strokeStyle = '#fff';
+                            ctx.lineWidth = 2;
+                            ctx.fill();
+                            ctx.stroke();
+                            
+                            ctx.fillStyle = '#fff';
+                            ctx.font = 'bold 8px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText("VP", v.x, v.y + 3);
+                        } else if (isSelected) {
+                            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                            ctx.fill();
+                        } else {
+                            // Ghost node
+                            ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                            ctx.fill();
+                        }
+                    }
+                });
+            });
+
+            updateUI();
+        }
+
+        function drawHex(x, y, size, fill) {
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                let angle = (Math.PI / 3) * i;
+                ctx.lineTo(x + size * Math.cos(angle), y + size * Math.sin(angle));
+            }
+            ctx.closePath();
+            ctx.fillStyle = fill;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function updateUI() {
+            document.getElementById('res-wood').textContent = state.resources.wood;
+            document.getElementById('res-stone').textContent = state.resources.stone;
+            document.getElementById('res-food').textContent = state.resources.food;
+            document.getElementById('res-clay').textContent = state.resources.clay;
+            document.getElementById('vp-count').textContent = state.vp;
+
+            const panel = document.getElementById('info-panel');
+            if (state.selected && state.turn === 'player' && state.hasRolled && !state.gameOver) {
+                panel.classList.remove('hidden');
+                const btn = document.getElementById('btn-build');
+                const costBox = document.getElementById('cost-info');
+                costBox.innerHTML = '';
+
+                if (state.selected.type === 'node') {
+                    document.getElementById('obj-title').textContent = "拠点を建設";
+                    const costs = { wood: 1, food: 1, clay: 1, stone: 1 };
+                    renderCosts(costBox, costs);
+                    btn.disabled = !canBuildNode(state.selected.id, 'player');
+                } else {
+                    document.getElementById('obj-title').textContent = "道を建設";
+                    const costs = { wood: 1, clay: 1 };
+                    renderCosts(costBox, costs);
+                    btn.disabled = !canBuildEdge(state.selected.id, 'player');
+                }
+            } else {
+                panel.classList.add('hidden');
+            }
+        }
+
+        function renderCosts(box, costs) {
+            Object.entries(costs).forEach(([k, v]) => {
+                const span = document.createElement('span');
+                const label = k === 'wood' ? '木' : k === 'stone' ? '石' : k === 'food' ? '麦' : '土';
+                span.textContent = `${label}x${v}`;
+                span.className = state.resources[k] >= v ? 'text-green-400 px-1' : 'text-red-400 px-1 font-bold';
+                box.appendChild(span);
+            });
+        }
+
+        function canBuildNode(id, owner) {
+            if (state.nodes[id]) return false;
+            const res = owner === 'player' ? state.resources : state.aiResources;
+            if (res.wood < 1 || res.food < 1 || res.clay < 1 || res.stone < 1) return false;
+            
+            let connected = false;
+            Object.keys(state.edges).forEach(eid => {
+                if (state.edges[eid].owner === owner && eid.includes(id)) connected = true;
+            });
+            return connected;
+        }
+
+        function canBuildEdge(id, owner) {
+            if (state.edges[id]) return false;
+            const res = owner === 'player' ? state.resources : state.aiResources;
+            if (res.wood < 1 || res.clay < 1) return false;
+            
+            const [v1, v2] = id.split('|');
+            if (state.nodes[v1]?.owner === owner || state.nodes[v2]?.owner === owner) return true;
+            
+            let connected = false;
+            Object.keys(state.edges).forEach(eid => {
+                if (state.edges[eid].owner === owner && (eid.includes(v1) || eid.includes(v2))) connected = true;
+            });
+            return connected;
+        }
+
+        function addLog(msg, color='gray') {
+            const logEl = document.getElementById('game-log');
+            const div = document.createElement('div');
+            div.textContent = `>> ${msg}`;
+            if(color==='blue') div.className = 'text-blue-400 font-bold';
+            if(color==='red') div.className = 'text-red-400 font-bold';
+            logEl.prepend(div);
+        }
+
+        function rollDice() {
+            if (state.hasRolled || state.gameOver) return;
+            const d1 = Math.floor(Math.random() * 6) + 1;
+            const d2 = Math.floor(Math.random() * 6) + 1;
+            const total = d1 + d2;
+            
+            document.getElementById('dice-1').textContent = d1;
+            document.getElementById('dice-2').textContent = d2;
+            document.getElementById('dice-total').textContent = total;
+            state.hasRolled = true;
+
+            const production = { player: { wood:0, stone:0, food:0, clay:0 }, ai: { wood:0, stone:0, food:0, clay:0 } };
+            
+            state.hexes.filter(h => h.num === total).forEach(h => {
+                for(let i=0; i<6; i++) {
+                    const nid = getCanonicalNodeId(h.q, h.r, i);
+                    if (state.nodes[nid] && h.res !== 'none') {
+                        production[state.nodes[nid].owner][h.res]++;
+                    }
+                }
+            });
+
+            ['player', 'ai'].forEach(side => {
+                const target = side === 'player' ? state.resources : state.aiResources;
+                Object.keys(production[side]).forEach(res => { target[res] += production[side][res]; });
+            });
+
+            addLog(`出目: ${total} | あなたの獲得: 木${production.player.wood} 土${production.player.clay} 麦${production.player.food} 石${production.player.stone}`);
+            
+            document.getElementById('btn-roll').classList.add('hidden');
+            document.getElementById('end-turn').classList.remove('hidden');
+            if (state.turn === 'player') document.getElementById('roll-instruction').classList.remove('hidden');
+            render();
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!state.hasRolled || state.turn !== 'player' || state.gameOver) return;
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+
+            let found = null;
+            // Check Nodes first (priority)
+            state.hexes.forEach(h => {
+                const vs = getHexVertices(h.q, h.r);
+                vs.forEach((v, i) => {
+                    if (Math.hypot(v.x - mx, v.y - my) < 20) found = { type: 'node', id: getCanonicalNodeId(h.q, h.r, i) };
+                });
+            });
+            // Check Edges
+            if(!found) {
+                state.hexes.forEach(h => {
+                    const vs = getHexVertices(h.q, h.r);
+                    for(let i=0; i<6; i++) {
+                        const v1 = vs[i], v2 = vs[(i+1)%6];
+                        if (distToSegment({x: mx, y: my}, v1, v2) < 15) found = { type: 'edge', id: getCanonicalEdgeId(h.q, h.r, i) };
+                    }
+                });
+            }
+
+            if (found) {
+                state.selected = found;
+                document.getElementById('roll-instruction').classList.add('hidden');
+            } else {
+                state.selected = null;
+            }
+            render();
+        });
+
+        function distToSegment(p, v, w) {
+            const l2 = Math.hypot(v.x - w.x, v.y - w.y)**2;
+            if (l2 == 0) return Math.hypot(p.x - v.x, p.y - v.y);
+            let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+            t = Math.max(0, Math.min(1, t));
+            return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+        }
+
+        document.getElementById('btn-build').addEventListener('click', () => {
+            if (!state.selected || state.gameOver) return;
+            const s = state.selected;
+            if (s.type === 'node' && canBuildNode(s.id, 'player')) {
+                state.resources.wood -= 1; state.resources.food -= 1; state.resources.clay -= 1; state.resources.stone -= 1;
+                state.nodes[s.id] = { owner: 'player' };
+                state.vp += 1;
+                addLog("拠点を建設！ 勝利点+1", 'blue');
+            } else if (s.type === 'edge' && canBuildEdge(s.id, 'player')) {
+                state.resources.wood -= 1; state.resources.clay -= 1;
+                state.edges[s.id] = { owner: 'player' };
+                addLog("道を建設しました。");
+            }
+            state.selected = null;
+            checkWin();
+            render();
+        });
+
+        document.getElementById('btn-roll').addEventListener('click', rollDice);
+
+        document.getElementById('end-turn').addEventListener('click', () => {
+            if (state.gameOver) return;
+            state.turn = 'ai';
+            state.hasRolled = false;
+            state.selected = null;
+            document.getElementById('end-turn').classList.add('hidden');
+            document.getElementById('roll-instruction').classList.add('hidden');
+            aiAction();
+        });
+
+        function aiAction() {
+            setTimeout(() => {
+                rollDice();
+                setTimeout(() => {
+                    let candidates = [];
+                    state.hexes.forEach(h => {
+                        for(let i=0; i<6; i++) {
+                            const nid = getCanonicalNodeId(h.q, h.r, i);
+                            if(canBuildNode(nid, 'ai')) candidates.push({type:'node', id:nid});
+                            const eid = getCanonicalEdgeId(h.q, h.r, i);
+                            if(canBuildEdge(eid, 'ai')) candidates.push({type:'edge', id:eid});
+                        }
+                    });
+
+                    if(candidates.length > 0) {
+                        // AI Logic: Prefer nodes if possible
+                        const target = candidates.find(c => c.type === 'node') || candidates[Math.floor(Math.random() * candidates.length)];
+                        if(target.type === 'node') {
+                            state.aiResources.wood -= 1; state.aiResources.food -= 1; state.aiResources.clay -= 1; state.aiResources.stone -= 1;
+                            state.nodes[target.id] = { owner: 'ai' };
+                            addLog("敵が拠点を建設しました", 'red');
+                        } else {
+                            state.aiResources.wood -= 1; state.aiResources.clay -= 1;
+                            state.edges[target.id] = { owner: 'ai' };
+                            addLog("敵が道を伸ばしました", 'red');
+                        }
+                    }
+
+                    if (!checkWin()) {
+                        state.turn = 'player';
+                        state.hasRolled = false;
+                        document.getElementById('btn-roll').classList.remove('hidden');
+                        addLog("あなたの手番です", 'blue');
+                        render();
+                    }
+                }, 800);
+            }, 600);
+        }
+
+        function checkWin() {
+            const pVP = state.vp;
+            const aNodes = Object.values(state.nodes).filter(n => n.owner === 'ai').length;
+            const aVP = aNodes + 1; // Basic VP for AI
+            if (pVP >= 10 || aVP >= 10) {
+                state.gameOver = true;
+                document.getElementById('overlay').classList.remove('hidden');
+                document.getElementById('result-title').textContent = pVP >= 10 ? "勝利" : "敗北";
+                document.getElementById('result-msg').textContent = pVP >= 10 ? "この島の支配権を確立しました！" : "敵に島を奪われてしまいました。";
+                return true;
+            }
+            return false;
+        }
+
+        document.getElementById('restart-btn').addEventListener('click', initGame);
+        document.getElementById('btn-reset-top').addEventListener('click', initGame);
+
+        // Initial launch
+        initGame();
+        window.onresize = resizeCanvas;
+    </script>
+</body>
+</html>
